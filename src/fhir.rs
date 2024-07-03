@@ -28,7 +28,7 @@ pub struct Resource {
     pub resource_type: String,
     pub id: String,
     pub identifier: Vec<Identifier>,
-    pub extension: Option<Vec<Extension>>
+    pub extension: Option<Vec<Extension>>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
