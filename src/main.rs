@@ -12,34 +12,11 @@ use serde::Serialize;
 use serde_json::from_slice;
 
 mod fhir;
+mod mainzelliste;
 
 mod config;
 
 static CONFIG: Lazy<Config> = Lazy::new(Config::parse);
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct MaReadPatient {
-    tokenType: String,
-    data: MaReadPatientData,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct MaReadPatientData {
-    searchIds: Vec<MaReadPatientDataIds>,
-    resultIds: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct MaReadPatientDataIds {
-    idString: String,
-    idType: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct MaToken {
-    id: String,
-    url: String,
-}
 
 struct Project(String, String);
 
@@ -74,18 +51,18 @@ async fn main() {
     for project in projects {
         let token = ma_token_request(&client, url.clone(), &project.0).await;
         let patients = get_patient(&client, token).await;
-        for patient in &patients {
-            let mut fhirPatient = get_patient_from_blaze(&client, patient.to_string()).await;
+        // for patient in &patients {
+        //     let mut fhirPatient = get_patient_from_blaze(&client, patient.to_string()).await;
 
-            if let Some(ref mut extension) = fhirPatient.extension {
-                if(!extension.contains(&Extension{url: "http://dktk.dkfz.de/fhir/Projects/".to_string() + &project.0.as_str()})) {
-                    extension.push(Extension{url: "http://dktk.dkfz.de/fhir/Projects/".to_string() + &project.0.as_str()})
-                }
-            } else {
-                fhirPatient.extension = Some(vec![Extension{url: "http://dktk.dkfz.de/fhir/Projects/".to_string() + &project.0.as_str()}]);
-            }
-            post_patient_to_blaze(&client, fhirPatient).await;
-        }
+        //     if let Some(ref mut extension) = fhirPatient.extension {
+        //         if(!extension.contains(&Extension{url: "http://dktk.dkfz.de/fhir/Projects/".to_string() + &project.0.as_str()})) {
+        //             extension.push(Extension{url: "http://dktk.dkfz.de/fhir/Projects/".to_string() + &project.0.as_str()})
+        //         }
+        //     } else {
+        //         fhirPatient.extension = Some(vec![Extension{url: "http://dktk.dkfz.de/fhir/Projects/".to_string() + &project.0.as_str()}]);
+        //     }
+        //     post_patient_to_blaze(&client, fhirPatient).await;
+        // }
     }
 }
 
@@ -117,32 +94,42 @@ async fn ma_session(client: &Client) -> String {
 }
 
 async fn ma_token_request(client: &Client, url: String, project: &String) -> String {
-    let mrdataids = MaReadPatientDataIds {
-        idString: "*".to_owned(),
-        idType: format!("{}_{}_L-ID", project.to_string(), CONFIG.site_name),
+
+
+    let mrdataids = mainzelliste::SearchId {
+        id_string: "*".to_owned(),
+        id_type: format!("{}_{}_L-ID", project.to_string(), CONFIG.site_name),
     };
 
-    let mrdata = MaReadPatientData {
-        resultIds: vec![format!("BK_{}_L-ID", CONFIG.site_name)],
-        searchIds: vec![mrdataids],
+    let audit = mainzelliste::AuditTrail {
+        username: "test".to_owned(),
+        remote_system: "test".to_owned(),
+        reason_for_change: "keine".to_owned()
     };
 
-    let body = MaReadPatient {
-        tokenType: "readPatients".to_owned(),
+    let mrdata = mainzelliste::Data {
+        result_ids: vec![format!("BK_{}_L-ID", CONFIG.site_name)],
+        search_ids: vec![mrdataids],
+        audit_trail: audit
+    };
+
+    let body = mainzelliste::Token {
+        type_field: "readPatients".to_owned(),
         data: mrdata,
     };
 
     println!("{}", serde_json::to_string(&body).unwrap());
 
-    let res = client.post(url).json(&body)
-    .header("mainzellisteApiKey", &CONFIG.mainzelliste_apikey)
-    .header("Content-Type", "application/json")
+    let mut res = dbg!(client.post(url + "tokens").json(&body)
+        .header("mainzellisteApiKey", &CONFIG.mainzelliste_apikey))
+    //.header("Content-Type", "application/json")
     .send().await.unwrap();
 
-    res.error_for_status_ref().unwrap();
+    res = res.error_for_status().unwrap();
+    
+    dbg!(&res);
 
-    dbg!(res);
-
+    
     return "nix".to_string();
 }
 
