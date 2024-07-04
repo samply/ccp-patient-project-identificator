@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
         };
 
         let fhir_client = reqwest::ClientBuilder::new()
-            .danger_accept_invalid_certs(true) // TODO: Remove
+           // .danger_accept_invalid_certs(true) // TODO: Remove
             .build()?;
 
         for patient in &patients {
@@ -107,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
 // 1. Get Mainzelliste Session
 async fn ma_session(client: &Client) -> anyhow::Result<String> {
     let res = client
-        .post(CONFIG.mainzelliste_url.join("/patientlist/sessions")?)
+        .post(CONFIG.mainzelliste_url.join("/sessions")?)
         .send()
         .await?
         .error_for_status()?;
@@ -163,7 +163,7 @@ async fn get_patient(client: &Client, token: String) -> anyhow::Result<Vec<Strin
         .get(
             CONFIG
                 .mainzelliste_url
-                .join(&format!("/patientlist/patients/tokenId/{token}"))?,
+                .join(&format!("/patients/tokenId/{token}"))?,
         )
         .send()
         .await?
