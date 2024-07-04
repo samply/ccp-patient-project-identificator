@@ -17,11 +17,11 @@ jobs:
     uses: samply/github-workflows/.github/workflows/rust.yml@main
     with:
         image-prefix: "samply/"
-        components: '[ "beam-file" ]'
+        components: '[ "Patient-Project-Identificator" ]'
         #architectures: '[ "amd64", "arm64" ]'
         #profile: debug
         test-via-script: false
-        features: '[ "", "server" ]'
+        #features: '[ "", "server" ]'
         push-to: ${{ (github.ref_protected == true || github.event_name == 'workflow_dispatch') && 'dockerhub' || 'none' }}
     secrets:
         DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
