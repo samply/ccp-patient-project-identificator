@@ -18,7 +18,7 @@ jobs:
     with:
         image-prefix: "samply/"
         components: '[ "Patient-Project-Identificator" ]'
-        #architectures: '[ "amd64", "arm64" ]'
+        architectures: '[ "amd64" ]'
         #profile: debug
         test-via-script: false
         #features: '[ "", "server" ]'
