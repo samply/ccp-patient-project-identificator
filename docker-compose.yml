@@ -1,0 +1,9 @@
+version: "3.8"
+services:
+  pi:
+    build: .
+    environment:
+      MAINZELLISTE_URL: ${MAINZELLISTE_URL:-http://id-manager}
+      MAINZELLISTE_APIKEY: ${MAINZELLISTE_APIKEY:-mainzelliste}
+      SITE_NAME: ${SITE_NAME:-Teststandort}
+      BLAZE_URL: ${BLAZE_URL:-http://bridgehead-ccp-blaze:8080}
