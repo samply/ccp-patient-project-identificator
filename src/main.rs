@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
 
     //Use normal client in prod
     let mainzel_client = reqwest::ClientBuilder::new()
-       // .danger_accept_invalid_certs(true) // TODO: Remove
+        .danger_accept_invalid_certs(true) // TODO: Remove
         .default_headers(HeaderMap::from_iter([(
             HeaderName::from_static("mainzellisteapikey"),
             CONFIG.mainzelliste_apikey.clone(),
@@ -61,10 +61,10 @@ async fn main() -> anyhow::Result<()> {
         ),
     ];
 
-    let url = ma_session(&mainzel_client).await?;
+    let session_id = ma_session(&mainzel_client).await?;
 
     for project in projects {
-        let token = match ma_token_request(&mainzel_client, &url, &project).await {
+        let token = match ma_token_request(&mainzel_client, &session_id, &project).await {
             Ok(url) => url,
             Err(_e) => {
                 eprintln!("Project {} not configured ", project.name);
@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
         };
 
         let fhir_client = reqwest::ClientBuilder::new()
-           // .danger_accept_invalid_certs(true) // TODO: Remove
+            .danger_accept_invalid_certs(true) // TODO: Remove
             .build()?;
 
         for patient in &patients {
@@ -101,26 +101,37 @@ async fn main() -> anyhow::Result<()> {
         }
         println!("Updated Patients of Project {}", project.name);
     }
+    tokio::time::sleep(Duration::MAX).await;
     Ok(())
 }
 
 // 1. Get Mainzelliste Session
 async fn ma_session(client: &Client) -> anyhow::Result<String> {
     let res = client
-        .post(CONFIG.mainzelliste_url.join("/sessions")?)
+        .post(CONFIG.mainzelliste_url.join("/patientlist/sessions")?)
         .send()
         .await?
         .error_for_status()?;
+    dbg!(&res);
 
     Ok(res
         .headers()
         .get("location")
         .ok_or(anyhow::anyhow!("No location header"))?
         .to_str()?
+        .trim_end_matches("/")
+        .rsplit_once("/")
+        .ok_or(anyhow::anyhow!("No Session ID"))?
+        .1
         .to_string())
 }
 
-async fn ma_token_request(client: &Client, url: &str, project: &Project) -> anyhow::Result<String> {
+async fn ma_token_request(
+    client: &Client,
+    session_id: &str,
+    project: &Project,
+) -> anyhow::Result<String> {
+    dbg!(session_id);
     let mrdataids = mainzelliste::SearchId {
         id_string: "*".to_owned(),
         id_type: format!("{}_{}_L-ID", project.id, CONFIG.site_name),
@@ -144,7 +155,11 @@ async fn ma_token_request(client: &Client, url: &str, project: &Project) -> anyh
     };
 
     let res = client
-        .post(format!("{url}tokens"))
+        .post(
+            CONFIG
+                .mainzelliste_url
+                .join(&format!("/patientlist/sessions/{}/tokens", session_id))?,
+        )
         .json(&body)
         .send()
         .await?
@@ -163,7 +178,7 @@ async fn get_patient(client: &Client, token: String) -> anyhow::Result<Vec<Strin
         .get(
             CONFIG
                 .mainzelliste_url
-                .join(&format!("/patients/tokenId/{token}"))?,
+                .join(&format!("/patientlist/patients/tokenId/{token}"))?,
         )
         .send()
         .await?
