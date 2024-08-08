@@ -15,5 +15,5 @@ pub struct Config {
     pub site_name: String,
 
     #[clap(long, env)]
-    pub blaze_url: Url,
+    pub fhir_server_url: Url,
 }

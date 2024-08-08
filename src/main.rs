@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use anyhow::Context;
 use clap::Parser;
 use config::Config;
 use fhir::Extension;
@@ -81,23 +82,32 @@ async fn main() -> anyhow::Result<()> {
             .build()?;
 
         for patient in &patients {
-            let mut fhir_patient = get_patient_from_blaze(&fhir_client, patient.to_string()).await;
+            let fhir_patient = get_patient_from_fhir_server(&fhir_client, patient.to_string()).await;
 
-            if let Some(ref mut extension) = fhir_patient.extension {
-                if !extension.contains(&Extension {
-                    url: "http://dktk.dkfz.de/fhir/Projects/".to_string() + &project.id.as_str(),
-                }) {
-                    extension.push(Extension {
-                        url: "http://dktk.dkfz.de/fhir/Projects/".to_string()
-                            + &project.id.as_str(),
-                    })
+            match fhir_patient {
+                Ok(mut fhir_patient) => {
+                    if let Some(ref mut extension) = fhir_patient.extension {
+                        if !extension.contains(&Extension {
+                            url: "http://dktk.dkfz.de/fhir/Projects/".to_string()
+                                + &project.id.as_str(),
+                        }) {
+                            extension.push(Extension {
+                                url: "http://dktk.dkfz.de/fhir/Projects/".to_string()
+                                    + &project.id.as_str(),
+                            })
+                        }
+                    } else {
+                        fhir_patient.extension = Some(vec![Extension {
+                            url: "http://dktk.dkfz.de/fhir/Projects/".to_string()
+                                + &project.id.as_str(),
+                        }]);
+                    }
+                    post_patient_to_fhir_server(&fhir_client, fhir_patient).await;
                 }
-            } else {
-                fhir_patient.extension = Some(vec![Extension {
-                    url: "http://dktk.dkfz.de/fhir/Projects/".to_string() + &project.id.as_str(),
-                }]);
+                Err(e) => {
+                    eprintln!("Did not find patient with pseudo {}\n{:#}", &patient,e);
+                }
             }
-            post_patient_to_blaze(&fhir_client, fhir_patient).await;
         }
         println!("Updated Patients of Project {}", project.name);
     }
@@ -190,26 +200,36 @@ async fn get_patient(client: &Client, token: String) -> anyhow::Result<Vec<Strin
         .collect())
 }
 
-async fn get_patient_from_blaze(client: &Client, patient_id: String) -> Resource {
+async fn get_patient_from_fhir_server(client: &Client, patient_id: String) -> anyhow::Result<Resource> {
     let res = client
         .get(
             CONFIG
-                .blaze_url
+                .fhir_server_url
                 .join(&format!("/fhir/Patient?identifier={}", patient_id))
                 .unwrap(),
         )
         .send()
         .await
-        .unwrap();
+        .context("Could not reach fhir_server")?
+        .error_for_status()
+        .context("Unsuccessful status code")?;
 
-    return res.json::<Root>().await.unwrap().entry[0].resource.clone();
+    return Ok(res
+        .json::<Root>()
+        .await
+        .context("Fail to parse patient resource")?
+        .entry
+        .get(0)
+        .ok_or_else(|| anyhow::anyhow!("Could not find any patient"))?
+        .resource
+        .clone());
 }
 
-async fn post_patient_to_blaze(client: &Client, patient: Resource) {
+async fn post_patient_to_fhir_server(client: &Client, patient: Resource) {
     client
         .put(
             CONFIG
-                .blaze_url
+                .fhir_server_url
                 .join(&format!("/fhir/Patient/{}", patient.id))
                 .unwrap(),
         )
