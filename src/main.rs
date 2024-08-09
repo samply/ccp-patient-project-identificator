@@ -55,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
         Project::new("DKTK000001985".to_string(), "RiskY-AML".to_string()),
         Project::new("DKTK000001951".to_string(), "ARMANI".to_string()),
         Project::new("DKTK000001950".to_string(), "IRCC".to_string()),
+        Project::new("DKTK999999999".to_string(), "Testprojekt".to_string()),
         Project::new("DKTK000001087".to_string(), "TamoBreastCa".to_string()),
         Project::new(
             "DKTK000000899".to_string(),
@@ -88,17 +89,17 @@ async fn main() -> anyhow::Result<()> {
                 Ok(mut fhir_patient) => {
                     if let Some(ref mut extension) = fhir_patient.extension {
                         if !extension.contains(&Extension {
-                            url: "http://dktk.dkfz.de/fhir/Projects/".to_string()
+                            url: "http://dktk.dkfz.de/fhir/projects/".to_string()
                                 + &project.id.as_str(),
                         }) {
                             extension.push(Extension {
-                                url: "http://dktk.dkfz.de/fhir/Projects/".to_string()
+                                url: "http://dktk.dkfz.de/fhir/projects/".to_string()
                                     + &project.id.as_str(),
                             })
                         }
                     } else {
                         fhir_patient.extension = Some(vec![Extension {
-                            url: "http://dktk.dkfz.de/fhir/Projects/".to_string()
+                            url: "http://dktk.dkfz.de/fhir/projects/".to_string()
                                 + &project.id.as_str(),
                         }]);
                     }
@@ -122,7 +123,6 @@ async fn ma_session(client: &Client) -> anyhow::Result<String> {
         .send()
         .await?
         .error_for_status()?;
-    dbg!(&res);
 
     Ok(res
         .headers()
@@ -141,7 +141,6 @@ async fn ma_token_request(
     session_id: &str,
     project: &Project,
 ) -> anyhow::Result<String> {
-    dbg!(session_id);
     let mrdataids = mainzelliste::SearchId {
         id_string: "*".to_owned(),
         id_type: format!("{}_{}_L-ID", project.id, CONFIG.site_name),
