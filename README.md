@@ -7,7 +7,9 @@ The service does not include a trigger or timer. Upon startup, it automatically 
 ## Environment Variables
 The following environment variables need to be configured for the service to function correctly:
 
-MAINZELLISTE_URL: The full URL to the Mainzelliste, e.g., http://patientlist:8080.
-MAINZELLISTE_APIKEY: The rotating API key for authenticating requests to the Mainzelliste.
-FHIR_SERVER_URL: The URL of the FHIR server where the patient resources are stored.
-SITE_NAME: The site name that matches the one used in the Mainzelliste.
+| Variable | Default Value | Description |
+| -------- | ------- | ------- |
+| MAINZELLISTE_URL | http://patientlist:8080 | The URL of the Mainzelliste. |
+| MAINZELLISTE_APIKEY | --- | The rotating API key for authenticating requests to the Mainzelliste. |
+| FHIR_SERVER_URL | http://blaze:8080 | The URL of the FHIR server where the patient resources are stored. |
+| SITE_NAME | --- | The site name that matches the name used in the Mainzelliste configuration. |

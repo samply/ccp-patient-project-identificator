@@ -69,17 +69,17 @@ async fn main() -> anyhow::Result<()> {
         let token = match ma_token_request(&mainzel_client, &session_id, &project).await {
             Ok(url) => url,
             Err(_e) => {
-                eprintln!("Project {} not configured ", project.name);
+                eprintln!("Project {} not configured in mainzelliste", project.name);
                 continue;
             }
         };
         let Ok(patients) = get_patient(&mainzel_client, token).await else {
-            println!("Did not found any Patients in {}", project.name);
+            println!("Did not found any patients from project {}", project.name);
             continue;
         };
 
         let fhir_client = reqwest::ClientBuilder::new()
-            .danger_accept_invalid_certs(true) // TODO: Remove
+            .danger_accept_invalid_certs(true) // Mainzelliste returns full server url, some sites do not have a SSL Cert for their servers 
             .build()?;
 
         for patient in &patients {
@@ -106,11 +106,11 @@ async fn main() -> anyhow::Result<()> {
                     post_patient_to_fhir_server(&fhir_client, fhir_patient).await;
                 }
                 Err(e) => {
-                    eprintln!("Did not find patient with pseudo {}\n{:#}", &patient,e);
+                    eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient,e);
                 }
             }
         }
-        println!("Updated Patients of Project {}", project.name);
+        println!("Added project information to patients of {}", project.name);
     }
     tokio::time::sleep(Duration::MAX).await;
     Ok(())
