@@ -87,26 +87,20 @@ async fn main() -> anyhow::Result<()> {
 
             match fhir_patient {
                 Ok(mut fhir_patient) => {
+                    let project_extension = Extension {
+                        url: format!("http://dktk.dkfz.de/fhir/projects/{}", project.id.as_str()),
+                    };
                     if let Some(ref mut extension) = fhir_patient.extension {
-                        if !extension.contains(&Extension {
-                            url: "http://dktk.dkfz.de/fhir/projects/".to_string()
-                                + &project.id.as_str(),
-                        }) {
-                            extension.push(Extension {
-                                url: "http://dktk.dkfz.de/fhir/projects/".to_string()
-                                    + &project.id.as_str(),
-                            })
+                        if !extension.contains(&project_extension) {
+                            extension.push(project_extension);
                         }
                     } else {
-                        fhir_patient.extension = Some(vec![Extension {
-                            url: "http://dktk.dkfz.de/fhir/projects/".to_string()
-                                + &project.id.as_str(),
-                        }]);
+                        fhir_patient.extension = Some(vec![project_extension]);
                     }
                     post_patient_to_fhir_server(&fhir_client, fhir_patient).await;
                 }
                 Err(e) => {
-                    eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient,e);
+                    eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient, e);
                 }
             }
         }
@@ -129,8 +123,8 @@ async fn ma_session(client: &Client) -> anyhow::Result<String> {
         .get("location")
         .ok_or(anyhow::anyhow!("No location header"))?
         .to_str()?
-        .trim_end_matches("/")
-        .rsplit_once("/")
+        .trim_end_matches('/')
+        .rsplit_once('/')
         .ok_or(anyhow::anyhow!("No Session ID"))?
         .1
         .to_string())
@@ -213,15 +207,15 @@ async fn get_patient_from_fhir_server(client: &Client, patient_id: String) -> an
         .error_for_status()
         .context("Unsuccessful status code")?;
 
-    return Ok(res
+    Ok(res
         .json::<Root>()
         .await
         .context("Fail to parse patient resource")?
         .entry
-        .get(0)
+        .first()
         .ok_or_else(|| anyhow::anyhow!("Could not find any patient"))?
         .resource
-        .clone());
+        .clone())
 }
 
 async fn post_patient_to_fhir_server(client: &Client, patient: Resource) {
