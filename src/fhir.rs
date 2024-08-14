@@ -24,8 +24,12 @@ pub struct Entry {
 #[serde(rename_all = "camelCase")]
 pub struct Resource {
     pub meta: Meta,
-    pub birth_date: String,
+    pub birth_date: Option<String>,
     pub resource_type: String,
+    pub gender: Option<String>,
+    pub name: Option<String>,
+    pub deceased_date_time: Option<String>,
+    pub deceased: Option<bool>,
     pub id: String,
     pub identifier: Vec<Identifier>,
     pub extension: Option<Vec<Extension>>,

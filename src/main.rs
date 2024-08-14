@@ -33,12 +33,14 @@ impl Project {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    println!("Loading Patient-Project-Indentificator...");
     sleep(Duration::from_secs(120)).await;
     println!("Starting Patient-Project-Indentificator...");
 
+
     //Use normal client in prod
     let mainzel_client = reqwest::ClientBuilder::new()
-        .danger_accept_invalid_certs(true) // TODO: Remove
+        .danger_accept_invalid_certs(true)
         .default_headers(HeaderMap::from_iter([(
             HeaderName::from_static("mainzellisteapikey"),
             CONFIG.mainzelliste_apikey.clone(),
@@ -98,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
                         fhir_patient.extension = Some(vec![project_extension]);
                     }
                     post_patient_to_fhir_server(&fhir_client, fhir_patient).await;
+                    println!("Added project to Patient {}", patient);
                 }
                 Err(e) => {
                     eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient, e);
