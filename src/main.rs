@@ -37,7 +37,6 @@ async fn main() -> anyhow::Result<()> {
     sleep(Duration::from_secs(120)).await;
     println!("Starting Patient-Project-Indentificator...");
 
-
     //Use normal client in prod
     let mainzel_client = reqwest::ClientBuilder::new()
         .danger_accept_invalid_certs(true)
@@ -68,46 +67,52 @@ async fn main() -> anyhow::Result<()> {
     let session_id = ma_session(&mainzel_client).await?;
 
     for project in projects {
-        let token = match ma_token_request(&mainzel_client, &session_id, &project).await {
-            Ok(url) => url,
-            Err(_e) => {
-                eprintln!("Project {} not configured in mainzelliste", project.name);
-                continue;
-            }
-        };
-        let Ok(patients) = get_patient(&mainzel_client, token).await else {
-            println!("Did not found any patients from project {}", project.name);
-            continue;
-        };
-
-        let fhir_client = reqwest::ClientBuilder::new()
-            .danger_accept_invalid_certs(true) // Mainzelliste returns full server url, some sites do not have a SSL Cert for their servers 
-            .build()?;
-
-        for patient in &patients {
-            let fhir_patient = get_patient_from_fhir_server(&fhir_client, patient.to_string()).await;
-
-            match fhir_patient {
-                Ok(mut fhir_patient) => {
-                    let project_extension = Extension {
-                        url: format!("http://dktk.dkfz.de/fhir/projects/{}", project.id.as_str()),
-                    };
-                    if let Some(ref mut extension) = fhir_patient.extension {
-                        if !extension.contains(&project_extension) {
-                            extension.push(project_extension);
-                        }
-                    } else {
-                        fhir_patient.extension = Some(vec![project_extension]);
-                    }
-                    post_patient_to_fhir_server(&fhir_client, fhir_patient).await;
-                    println!("Added project to Patient {}", patient);
+        println!("Adding project information to patients of {}", project.name);
+        for id_type in ["L", "G"] {
+            let token = match ma_token_request(&mainzel_client, &session_id, &project, &id_type).await {
+                Ok(url) => url,
+                Err(_e) => {
+                    eprintln!("Project {} not configured in mainzelliste", project.name);
+                    continue;
                 }
-                Err(e) => {
-                    eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient, e);
+            };
+            let Ok(patients) = get_patient(&mainzel_client, token).await else {
+                println!("Did not found any patients from project {}", project.name);
+                continue;
+            };
+
+            let fhir_client = reqwest::ClientBuilder::new()
+                .danger_accept_invalid_certs(true) // Mainzelliste returns full server url, some sites do not have a SSL Cert for their servers
+                .build()?;
+
+            for patient in &patients {
+                let fhir_patient =
+                    get_patient_from_fhir_server(&fhir_client, patient.to_string()).await;
+
+                match fhir_patient {
+                    Ok(mut fhir_patient) => {
+                        let project_extension = Extension {
+                            url: format!(
+                                "http://dktk.dkfz.de/fhir/projects/{}",
+                                project.id.as_str()
+                            ),
+                        };
+                        if let Some(ref mut extension) = fhir_patient.extension {
+                            if !extension.contains(&project_extension) {
+                                extension.push(project_extension);
+                            }
+                        } else {
+                            fhir_patient.extension = Some(vec![project_extension]);
+                        }
+                        post_patient_to_fhir_server(&fhir_client, fhir_patient).await;
+                        println!("Added project to Patient {}", patient);
+                    }
+                    Err(e) => {
+                        eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient, e);
+                    }
                 }
             }
         }
-        println!("Added project information to patients of {}", project.name);
     }
     tokio::time::sleep(Duration::MAX).await;
     Ok(())
@@ -137,10 +142,11 @@ async fn ma_token_request(
     client: &Client,
     session_id: &str,
     project: &Project,
+    id_type: &str
 ) -> anyhow::Result<String> {
     let mrdataids = mainzelliste::SearchId {
         id_string: "*".to_owned(),
-        id_type: format!("{}_{}_L-ID", project.id, CONFIG.site_name),
+        id_type: format!("{}_{}_{}-ID", project.id, CONFIG.site_name, id_type),
     };
 
     let audit = mainzelliste::AuditTrail {
@@ -150,7 +156,7 @@ async fn ma_token_request(
     };
 
     let mrdata = mainzelliste::Data {
-        result_ids: vec![format!("BK_{}_L-ID", CONFIG.site_name)],
+        result_ids: vec![format!("BK_{}_{}-ID", CONFIG.site_name, id_type)],
         search_ids: vec![mrdataids],
         audit_trail: audit,
     };
@@ -196,7 +202,10 @@ async fn get_patient(client: &Client, token: String) -> anyhow::Result<Vec<Strin
         .collect())
 }
 
-async fn get_patient_from_fhir_server(client: &Client, patient_id: String) -> anyhow::Result<Resource> {
+async fn get_patient_from_fhir_server(
+    client: &Client,
+    patient_id: String,
+) -> anyhow::Result<Resource> {
     let res = client
         .get(
             CONFIG
@@ -232,5 +241,7 @@ async fn post_patient_to_fhir_server(client: &Client, patient: Resource) {
         .json(&patient)
         .send()
         .await
-        .unwrap();
+        .context("Could not reach fhir_server")
+        .err()
+        .context("Unsuccessful status code");
 }
