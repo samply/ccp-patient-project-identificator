@@ -1,9 +1,7 @@
 version: "3.8"
 services:
   ppi:
-    image: ppi
+    build: .
     environment:
-      MAINZELLISTE_URL: ${MAINZELLISTE_URL:-http://id-manager}
-      MAINZELLISTE_APIKEY: ${MAINZELLISTE_APIKEY:-mainzelliste}
-      SITE_NAME: ${SITE_NAME:-Teststandort}
-      FHIR_SERVER_URL: ${FHIR_SERVER_URL:-http://bridgehead-ccp-blaze:8080}
+      MAINZELLISTE_APIKEY: ${MAINZELLISTE_APIKEY}
+      SITE_NAME: ${SITE_NAME}

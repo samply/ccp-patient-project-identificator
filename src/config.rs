@@ -5,7 +5,7 @@ use reqwest::{header::HeaderValue, Url};
 #[clap(author, version, about, long_about = None)]
 
 pub struct Config {
-    #[clap(long, env)]
+    #[clap(long, env, default_value = "http://bridgehead-patientlist:8080")]
     pub mainzelliste_url: Url,
 
     #[clap(long, env)]
@@ -14,6 +14,6 @@ pub struct Config {
     #[clap(long, env)]
     pub site_name: String,
 
-    #[clap(long, env)]
+    #[clap(long, env, default_value = "http://bridgehead-ccp-blaze:8080")]
     pub fhir_server_url: Url,
 }

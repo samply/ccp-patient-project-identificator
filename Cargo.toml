@@ -1,5 +1,5 @@
 [package]
-name = "Patient-Project-Identificator"
+name = "ccp_patient-project-identificator"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
