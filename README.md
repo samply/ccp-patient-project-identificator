@@ -16,3 +16,6 @@ The following environment variables need to be configured for the service to fun
 | SITE_NAME | --- | The site name that matches the name used in the Mainzelliste configuration. |
 | MAINZELLISTE_URL | <http://patientlist:8080> | The URL of the Mainzelliste. |
 | FHIR_SERVER_URL | <http://bridgehead-ccp-blaze:8080> | The URL of the FHIR server where the patient resources are stored. |
+
+
+## Samply 2024
