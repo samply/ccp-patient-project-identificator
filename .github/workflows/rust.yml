@@ -17,7 +17,7 @@ jobs:
     uses: samply/github-workflows/.github/workflows/rust.yml@main
     with:
         image-prefix: "samply/"
-        components: '[ "ccp_patient_project_identificator" ]'
+        components: '[ "ccp-patient-project-identificator" ]'
         architectures: '[ "amd64" ]'
         #profile: debug
         test-via-script: false
