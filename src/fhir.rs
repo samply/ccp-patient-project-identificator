@@ -24,14 +24,21 @@ pub struct Entry {
 #[serde(rename_all = "camelCase")]
 pub struct Resource {
     pub meta: Meta,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub birth_date: Option<String>,
     pub resource_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub gender: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub deceased_date_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub deceased: Option<bool>,
     pub id: String,
-    pub identifier: Vec<Identifier>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<Vec<Identifier>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub extension: Option<Vec<Extension>>,
 }
 

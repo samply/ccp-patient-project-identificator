@@ -69,13 +69,14 @@ async fn main() -> anyhow::Result<()> {
     for project in projects {
         println!("Adding project information to patients of {}", project.name);
         for id_type in ["L", "G"] {
-            let token = match ma_token_request(&mainzel_client, &session_id, &project, &id_type).await {
-                Ok(url) => url,
-                Err(_e) => {
-                    eprintln!("Project {} not configured in mainzelliste", project.name);
-                    continue;
-                }
-            };
+            let token =
+                match ma_token_request(&mainzel_client, &session_id, &project, &id_type).await {
+                    Ok(url) => url,
+                    Err(_e) => {
+                        eprintln!("Project {} not configured in mainzelliste", project.name);
+                        continue;
+                    }
+                };
             let Ok(patients) = get_patient(&mainzel_client, token).await else {
                 println!("Did not found any patients from project {}", project.name);
                 continue;
@@ -101,11 +102,9 @@ async fn main() -> anyhow::Result<()> {
                             if !extension.contains(&project_extension) {
                                 extension.push(project_extension);
                             }
-                        } else {
-                            fhir_patient.extension = Some(vec![project_extension]);
+                            post_patient_to_fhir_server(&fhir_client, fhir_patient).await;
+                            println!("Added project to Patient {}", patient);
                         }
-                        post_patient_to_fhir_server(&fhir_client, fhir_patient).await;
-                        println!("Added project to Patient {}", patient);
                     }
                     Err(e) => {
                         eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient, e);
@@ -142,7 +141,7 @@ async fn ma_token_request(
     client: &Client,
     session_id: &str,
     project: &Project,
-    id_type: &str
+    id_type: &str,
 ) -> anyhow::Result<String> {
     let mrdataids = mainzelliste::SearchId {
         id_string: "*".to_owned(),
