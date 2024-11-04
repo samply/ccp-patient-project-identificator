@@ -102,8 +102,11 @@ async fn main() -> anyhow::Result<()> {
                             if !extension.contains(&project_extension) {
                                 extension.push(project_extension);
                             }
-                            post_patient_to_fhir_server(&fhir_client, fhir_patient).await;
-                            println!("Added project to Patient {}", patient);
+                            if let Err(e) = post_patient_to_fhir_server(&fhir_client, fhir_patient).await {
+                                eprintln!("Failed to post patient: {e}\n{patient:#}");
+                            } else {
+                                println!("Added project to Patient {}", patient);
+                            }
                         }
                     }
                     Err(e) => {
@@ -229,7 +232,7 @@ async fn get_patient_from_fhir_server(
         .clone())
 }
 
-async fn post_patient_to_fhir_server(client: &Client, patient: Resource) {
+async fn post_patient_to_fhir_server(client: &Client, patient: Resource) -> anyhow::Result<()> {
     client
         .put(
             CONFIG
@@ -240,7 +243,7 @@ async fn post_patient_to_fhir_server(client: &Client, patient: Resource) {
         .json(&patient)
         .send()
         .await
-        .context("Could not reach fhir_server")
-        .err()
-        .context("Unsuccessful status code");
+        .context("Could not reach fhir_server")?
+        .error_for_status()?;
+    Ok(())
 }
