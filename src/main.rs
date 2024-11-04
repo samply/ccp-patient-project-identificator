@@ -33,8 +33,6 @@ impl Project {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("Loading Patient-Project-Indentificator...");
-    sleep(Duration::from_secs(120)).await;
     println!("Starting Patient-Project-Indentificator...");
 
     //Use normal client in prod
@@ -64,6 +62,12 @@ async fn main() -> anyhow::Result<()> {
         ),
     ];
 
+    let fhir_client = reqwest::ClientBuilder::new()
+        .danger_accept_invalid_certs(true) // Mainzelliste returns full server url, some sites do not have a SSL Cert for their servers
+        .build()?;
+
+    wait_for_fhir_server(&fhir_client).await;
+
     let session_id = ma_session(&mainzel_client).await?;
 
     for project in projects {
@@ -81,10 +85,6 @@ async fn main() -> anyhow::Result<()> {
                 println!("Did not found any patients from project {}", project.name);
                 continue;
             };
-
-            let fhir_client = reqwest::ClientBuilder::new()
-                .danger_accept_invalid_certs(true) // Mainzelliste returns full server url, some sites do not have a SSL Cert for their servers
-                .build()?;
 
             for patient in &patients {
                 let fhir_patient =
@@ -246,4 +246,14 @@ async fn post_patient_to_fhir_server(client: &Client, patient: Resource) -> anyh
         .context("Could not reach fhir_server")?
         .error_for_status()?;
     Ok(())
+}
+
+async fn wait_for_fhir_server(client: &Client) {
+    loop {
+        if client.get(CONFIG.fhir_server_url.join("/fhir/metadata").unwrap()).send().await.is_ok_and(|r| r.status().is_success()) {
+            break
+        }
+        println!("Waiting for fhir server startup");
+        sleep(Duration::from_secs(10)).await;
+    }
 }
