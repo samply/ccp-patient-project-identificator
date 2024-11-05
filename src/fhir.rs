@@ -7,6 +7,7 @@ pub struct Root {
     pub id: String,
     #[serde(rename = "type")]
     pub type_field: String,
+    #[serde(default)]
     pub entry: Vec<Entry>,
     pub link: Vec<Link>,
     pub total: i64,
