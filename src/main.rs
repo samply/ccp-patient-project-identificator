@@ -98,16 +98,14 @@ async fn main() -> anyhow::Result<()> {
                                 project.id.as_str()
                             ),
                         };
-                        if let Some(ref mut extension) = fhir_patient.extension {
-                            if !extension.contains(&project_extension) {
-                                extension.push(project_extension);
+                            if !fhir_patient.extension.contains(&project_extension) {
+                                fhir_patient.extension.push(project_extension);
                             }
                             if let Err(e) = post_patient_to_fhir_server(&fhir_client, fhir_patient).await {
                                 eprintln!("Failed to post patient: {e}\n{patient:#}");
                             } else {
                                 println!("Added project to Patient {}", patient);
                             }
-                        }
                     }
                     Err(e) => {
                         eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient, e);

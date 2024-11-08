@@ -40,7 +40,7 @@ pub struct Resource {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identifier: Option<Vec<Identifier>>,
     #[serde(default)]
-    pub extension: Option<Vec<Extension>>,
+    pub extension: Vec<Extension>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
