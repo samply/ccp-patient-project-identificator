@@ -77,14 +77,16 @@ async fn main() -> anyhow::Result<()> {
                 match ma_token_request(&mainzel_client, &session_id, &project, &id_type).await {
                     Ok(url) => url,
                     Err(_e) => {
-                        eprintln!("Project {} not configured in mainzelliste", project.name);
+                        eprintln!("Project {} {} not configured in mainzelliste", project.name, id_type);
                         continue;
                     }
                 };
             let Ok(patients) = get_patient(&mainzel_client, token).await else {
-                println!("Did not found any patients from project {}", project.name);
+                println!("Did not found any patients from project {} {id_type}", project.name);
                 continue;
             };
+
+            println!("Found {} patients from project {} {id_type}", patients.len(), project.name);
 
             for patient in &patients {
                 let fhir_patient =
