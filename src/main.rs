@@ -98,14 +98,16 @@ async fn main() -> anyhow::Result<()> {
                                 project.id.as_str()
                             ),
                         };
-                            if !fhir_patient.extension.contains(&project_extension) {
-                                fhir_patient.extension.push(project_extension);
-                            }
-                            if let Err(e) = post_patient_to_fhir_server(&fhir_client, fhir_patient).await {
-                                eprintln!("Failed to post patient: {e}\n{patient:#}");
-                            } else {
-                                println!("Added project to Patient {}", patient);
-                            }
+                        if !fhir_patient.extension.contains(&project_extension) {
+                            fhir_patient.extension.push(project_extension);
+                        }
+                        if let Err(e) =
+                            post_patient_to_fhir_server(&fhir_client, fhir_patient).await
+                        {
+                            eprintln!("Failed to post patient: {e}\n{patient:#}");
+                        } else {
+                            println!("Added project to Patient {}", patient);
+                        }
                     }
                     Err(e) => {
                         eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient, e);
@@ -248,8 +250,13 @@ async fn post_patient_to_fhir_server(client: &Client, patient: Resource) -> anyh
 
 async fn wait_for_fhir_server(client: &Client) {
     loop {
-        if client.get(CONFIG.fhir_server_url.join("/fhir/metadata").unwrap()).send().await.is_ok_and(|r| r.status().is_success()) {
-            break
+        if client
+            .get(CONFIG.fhir_server_url.join("/fhir/metadata").unwrap())
+            .send()
+            .await
+            .is_ok_and(|r| r.status().is_success())
+        {
+            break;
         }
         println!("Waiting for fhir server startup");
         sleep(Duration::from_secs(10)).await;
