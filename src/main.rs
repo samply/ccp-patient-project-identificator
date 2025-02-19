@@ -66,60 +66,72 @@ async fn main() -> anyhow::Result<()> {
         .danger_accept_invalid_certs(true) // Mainzelliste returns full server url, some sites do not have a SSL Cert for their servers
         .build()?;
 
-    wait_for_fhir_server(&fhir_client).await;
+    loop {
+        wait_for_fhir_server(&fhir_client).await;
 
-    let session_id = ma_session(&mainzel_client).await?;
+        let session_id = ma_session(&mainzel_client).await?;
 
-    for project in projects {
-        println!("Adding project information to patients of {}", project.name);
-        for id_type in ["L", "G"] {
-            let token =
-                match ma_token_request(&mainzel_client, &session_id, &project, &id_type).await {
+        for project in &projects {
+            println!("Adding project information to patients of {}", project.name);
+            for id_type in ["L", "G"] {
+                let token = match ma_token_request(&mainzel_client, &session_id, &project, &id_type)
+                    .await
+                {
                     Ok(url) => url,
                     Err(_e) => {
-                        eprintln!("Project {} {} not configured in mainzelliste", project.name, id_type);
+                        eprintln!(
+                            "Project {} {} not configured in mainzelliste",
+                            project.name, id_type
+                        );
                         continue;
                     }
                 };
-            let Ok(patients) = get_patient(&mainzel_client, token).await else {
-                println!("Did not found any patients from project {} {id_type}", project.name);
-                continue;
-            };
+                let Ok(patients) = get_patient(&mainzel_client, token).await else {
+                    println!(
+                        "Did not found any patients from project {} {id_type}",
+                        project.name
+                    );
+                    continue;
+                };
 
-            println!("Found {} patients from project {} {id_type}", patients.len(), project.name);
+                println!(
+                    "Found {} patients from project {} {id_type}",
+                    patients.len(),
+                    project.name
+                );
 
-            for patient in &patients {
-                let fhir_patient =
-                    get_patient_from_fhir_server(&fhir_client, patient.to_string()).await;
+                for patient in &patients {
+                    let fhir_patient =
+                        get_patient_from_fhir_server(&fhir_client, patient.to_string()).await;
 
-                match fhir_patient {
-                    Ok(mut fhir_patient) => {
-                        let project_extension = Extension {
-                            url: format!(
-                                "http://dktk.dkfz.de/fhir/projects/{}",
-                                project.id.as_str()
-                            ),
-                        };
-                        if !fhir_patient.extension.contains(&project_extension) {
-                            fhir_patient.extension.push(project_extension);
+                    match fhir_patient {
+                        Ok(mut fhir_patient) => {
+                            let project_extension = Extension {
+                                url: format!(
+                                    "http://dktk.dkfz.de/fhir/projects/{}",
+                                    project.id.as_str()
+                                ),
+                            };
+                            if !fhir_patient.extension.contains(&project_extension) {
+                                fhir_patient.extension.push(project_extension);
+                            }
+                            if let Err(e) =
+                                post_patient_to_fhir_server(&fhir_client, fhir_patient).await
+                            {
+                                eprintln!("Failed to post patient: {e}\n{patient:#}");
+                            } else {
+                                println!("Added project to Patient {}", patient);
+                            }
                         }
-                        if let Err(e) =
-                            post_patient_to_fhir_server(&fhir_client, fhir_patient).await
-                        {
-                            eprintln!("Failed to post patient: {e}\n{patient:#}");
-                        } else {
-                            println!("Added project to Patient {}", patient);
+                        Err(e) => {
+                            eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient, e);
                         }
-                    }
-                    Err(e) => {
-                        eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient, e);
                     }
                 }
             }
         }
+        tokio::time::sleep(Duration::from_secs(60*60*24)).await;
     }
-    tokio::time::sleep(Duration::MAX).await;
-    Ok(())
 }
 
 // 1. Get Mainzelliste Session
