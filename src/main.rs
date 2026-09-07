@@ -1,4 +1,5 @@
 use std::time::Duration;
+use std::sync::LazyLock;
 
 use anyhow::Context;
 use clap::Parser;
@@ -6,7 +7,6 @@ use config::Config;
 use fhir::Extension;
 use fhir::Resource;
 use fhir::Root;
-use once_cell::sync::Lazy;
 use reqwest::header::HeaderMap;
 use reqwest::header::HeaderName;
 use reqwest::Client;
@@ -18,7 +18,7 @@ mod mainzelliste;
 
 mod config;
 
-static CONFIG: Lazy<Config> = Lazy::new(Config::parse);
+static CONFIG: LazyLock<Config> = LazyLock::new(Config::parse);
 
 struct Project {
     id: String,
