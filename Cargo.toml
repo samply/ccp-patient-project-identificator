@@ -13,3 +13,5 @@ reqwest = { version = "0.13", features = ["json", "rustls"] }
 serde = { version = "1", features = ["serde_derive"]}
 serde_json = "1"
 tokio = { version = "1", features = ["full"]}
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
