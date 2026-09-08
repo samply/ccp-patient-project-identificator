@@ -31,3 +31,17 @@ pub struct AuditTrail {
     pub remote_system: String,
     pub reason_for_change: String,
 }
+
+/// One entry of the patient list returned for a `readPatients` token.
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Patient {
+    #[serde(default)]
+    pub ids: Vec<Id>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Id {
+    pub id_type: String,
+    pub id_string: String,
+}

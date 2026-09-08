@@ -1,92 +1,51 @@
+use anyhow::Context;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::json;
+use serde_json::Value;
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Root {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub type_field: String,
+/// A FHIR search response. Only the entries are read, the rest of the bundle is
+/// ignored.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Bundle {
     #[serde(default)]
     pub entry: Vec<Entry>,
-    pub link: Vec<Link>,
-    pub total: i64,
-    pub resource_type: String,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Entry {
-    pub full_url: String,
-    pub resource: Resource,
+    pub resource: Patient,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Resource {
-    pub meta: Meta,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub birth_date: Option<String>,
-    pub resource_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gender: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub deceased_date_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub deceased: Option<bool>,
-    pub id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub identifier: Option<Vec<Identifier>>,
-    #[serde(default)]
-    pub extension: Vec<Extension>,
-}
+/// A Patient resource kept as raw JSON. Writing a patient back is a full
+/// replace, so keeping the untouched JSON makes sure no field is dropped just
+/// because this component does not model it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Patient(Value);
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Meta {
-    pub version_id: String,
-    pub last_updated: String,
-    pub profile: Vec<String>,
-}
+impl Patient {
+    pub fn id(&self) -> anyhow::Result<&str> {
+        self.0["id"].as_str().context("Patient resource has no id")
+    }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Identifier {
-    #[serde(rename = "type")]
-    pub type_field: Type,
-    pub value: String,
-}
+    pub fn has_extension(&self, url: &str) -> bool {
+        self.0["extension"]
+            .as_array()
+            .is_some_and(|extensions| extensions.iter().any(|e| e["url"].as_str() == Some(url)))
+    }
 
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Type {
-    pub coding: Vec<Coding>,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Coding {
-    pub system: String,
-    pub code: String,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Search {
-    pub mode: String,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Link {
-    pub relation: String,
-    pub url: String,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Extension {
-    pub url: String,
+    /// Appends a bare url extension. The CQL that consumes this only matches on
+    /// `Patient.extension.url`, so no value element is set.
+    pub fn add_extension(&mut self, url: &str) -> anyhow::Result<()> {
+        self.0
+            .as_object_mut()
+            .context("Patient resource is not a JSON object")?
+            .entry("extension")
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .context("Patient.extension is not an array")?
+            .push(json!({ "url": url }));
+        Ok(())
+    }
 }

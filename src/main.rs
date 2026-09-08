@@ -1,17 +1,21 @@
-use std::time::Duration;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use anyhow::Context;
 use clap::Parser;
 use config::Config;
-use fhir::Extension;
-use fhir::Resource;
-use fhir::Root;
+use fhir::Bundle;
+use fhir::Patient;
 use reqwest::header::HeaderMap;
 use reqwest::header::HeaderName;
 use reqwest::Client;
+use reqwest::Url;
 use serde_json::Value;
 use tokio::time::sleep;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
+use tracing_subscriber::EnvFilter;
 
 mod fhir;
 mod mainzelliste;
@@ -19,6 +23,8 @@ mod mainzelliste;
 mod config;
 
 static CONFIG: LazyLock<Config> = LazyLock::new(Config::parse);
+
+const RUN_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
 
 struct Project {
     id: String,
@@ -33,11 +39,16 @@ impl Project {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("Starting Patient-Project-Indentificator...");
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .init();
 
-    //Use normal client in prod
+    info!("Starting Patient-Project-Identificator");
+
     let mainzel_client = reqwest::ClientBuilder::new()
-        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_certs(!CONFIG.require_signed_certs)
         .default_headers(HeaderMap::from_iter([(
             HeaderName::from_static("mainzellisteapikey"),
             CONFIG.mainzelliste_apikey.clone(),
@@ -62,8 +73,10 @@ async fn main() -> anyhow::Result<()> {
         ),
     ];
 
+    // Mainzelliste returns the full server url, some sites do not have a signed
+    // certificate for their servers.
     let fhir_client = reqwest::ClientBuilder::new()
-        .danger_accept_invalid_certs(true) // Mainzelliste returns full server url, some sites do not have a SSL Cert for their servers
+        .danger_accept_invalid_certs(!CONFIG.require_signed_certs)
         .build()?;
 
     loop {
@@ -72,72 +85,90 @@ async fn main() -> anyhow::Result<()> {
         let session_id = ma_session(&mainzel_client).await?;
 
         for project in &projects {
-            println!("Adding project information to patients of {}", project.name);
+            info!("Adding project information to patients of {}", project.name);
             for id_type in ["L", "G"] {
-                let token = match ma_token_request(&mainzel_client, &session_id, &project, &id_type)
-                    .await
-                {
-                    Ok(url) => url,
-                    Err(_e) => {
-                        eprintln!(
-                            "Project {} {} not configured in mainzelliste",
-                            project.name, id_type
+                let token =
+                    match ma_token_request(&mainzel_client, &session_id, project, id_type).await {
+                        Ok(token) => token,
+                        Err(e) => {
+                            error!(
+                                "Could not get a readPatients token for project {} {id_type}, \
+                                 it is probably not configured in the Mainzelliste: {e:#}",
+                                project.name
+                            );
+                            continue;
+                        }
+                    };
+
+                let patients = match get_patients(&mainzel_client, &token, id_type).await {
+                    Ok(patients) => patients,
+                    Err(e) => {
+                        error!(
+                            "Could not read the patients of project {} {id_type}: {e:#}",
+                            project.name
                         );
                         continue;
                     }
                 };
-                let Ok(patients) = get_patient(&mainzel_client, token).await else {
-                    println!(
-                        "Did not found any patients from project {} {id_type}",
-                        project.name
-                    );
-                    continue;
-                };
 
-                println!(
+                info!(
                     "Found {} patients from project {} {id_type}",
                     patients.len(),
                     project.name
                 );
 
-                for patient in &patients {
-                    let fhir_patient =
-                        get_patient_from_fhir_server(&fhir_client, patient.to_string()).await;
+                let extension_url =
+                    format!("http://dktk.dkfz.de/fhir/projects/{}", project.id.as_str());
 
-                    match fhir_patient {
-                        Ok(mut fhir_patient) => {
-                            let project_extension = Extension {
-                                url: format!(
-                                    "http://dktk.dkfz.de/fhir/projects/{}",
-                                    project.id.as_str()
-                                ),
-                            };
-                            if !fhir_patient.extension.contains(&project_extension) {
-                                fhir_patient.extension.push(project_extension);
+                for pseudonym in &patients {
+                    let mut fhir_patient =
+                        match get_patient_from_fhir_server(&fhir_client, pseudonym).await {
+                            Ok(patient) => patient,
+                            Err(e) => {
+                                error!("Did not find patient with pseudonym {pseudonym}: {e:#}");
+                                continue;
                             }
-                            if let Err(e) =
-                                post_patient_to_fhir_server(&fhir_client, fhir_patient).await
-                            {
-                                eprintln!("Failed to post patient: {e}\n{patient:#}");
-                            } else {
-                                println!("Added project to Patient {}", patient);
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Did not find patient with pseudonym {}\n{:#}", &patient, e);
-                        }
+                        };
+
+                    if fhir_patient.has_extension(&extension_url) {
+                        continue;
+                    }
+
+                    if let Err(e) = fhir_patient.add_extension(&extension_url) {
+                        error!("Could not tag patient {pseudonym}: {e:#}");
+                        continue;
+                    }
+
+                    match post_patient_to_fhir_server(&fhir_client, &fhir_patient).await {
+                        Ok(()) => info!("Added project to patient {pseudonym}"),
+                        Err(e) => error!("Failed to write patient {pseudonym}: {e:#}"),
                     }
                 }
             }
         }
-        tokio::time::sleep(Duration::from_secs(60*60*24)).await;
+        sleep(RUN_INTERVAL).await;
     }
+}
+
+/// Appends a relative path to a configured base url.
+///
+/// [`Url::join`] replaces the whole path when the argument starts with a slash
+/// and drops the last segment when the base has no trailing slash, so a server
+/// hosted under a sub path would silently be addressed wrong.
+fn join_url(base: &Url, path: &str) -> anyhow::Result<Url> {
+    let mut url = base.clone();
+    url.path_segments_mut()
+        .map_err(|()| anyhow::anyhow!("The url {base} cannot be used as a base"))?
+        .pop_if_empty()
+        .push("");
+    url.join(path.trim_start_matches('/'))
+        .with_context(|| format!("Could not append {path} to {base}"))
 }
 
 // 1. Get Mainzelliste Session
 async fn ma_session(client: &Client) -> anyhow::Result<String> {
     let res = client
-        .post(CONFIG.mainzelliste_url.join("/patientlist/sessions")?)
+        .post(join_url(&CONFIG.mainzelliste_url, "patientlist/sessions")?)
         .send()
         .await?
         .error_for_status()?;
@@ -166,13 +197,13 @@ async fn ma_token_request(
     };
 
     let audit = mainzelliste::AuditTrail {
-        username: "test".to_owned(),
-        remote_system: "test".to_owned(),
-        reason_for_change: "keine".to_owned(),
+        username: "project user".to_owned(),
+        remote_system: "ccp-ppi".to_owned(),
+        reason_for_change: "no changes made".to_owned(),
     };
 
     let mrdata = mainzelliste::Data {
-        result_ids: vec![format!("BK_{}_{}-ID", CONFIG.site_name, id_type)],
+        result_ids: vec![result_id_type(id_type)],
         search_ids: vec![mrdataids],
         audit_trail: audit,
     };
@@ -183,17 +214,16 @@ async fn ma_token_request(
     };
 
     let res = client
-        .post(
-            CONFIG
-                .mainzelliste_url
-                .join(&format!("/patientlist/sessions/{}/tokens", session_id))?,
-        )
+        .post(join_url(
+            &CONFIG.mainzelliste_url,
+            &format!("patientlist/sessions/{session_id}/tokens"),
+        )?)
         .json(&body)
         .send()
         .await?
         .error_for_status()?;
 
-    res.json::<serde_json::Value>()
+    res.json::<Value>()
         .await?
         .get("tokenId")
         .and_then(Value::as_str)
@@ -201,60 +231,81 @@ async fn ma_token_request(
         .ok_or(anyhow::anyhow!("Got no token"))
 }
 
-async fn get_patient(client: &Client, token: String) -> anyhow::Result<Vec<String>> {
+/// The id type this component asks the Mainzelliste to return, which is the
+/// pseudonym the FHIR server stores as the patient identifier.
+fn result_id_type(id_type: &str) -> String {
+    format!("BK_{}_{}-ID", CONFIG.site_name, id_type)
+}
+
+async fn get_patients(client: &Client, token: &str, id_type: &str) -> anyhow::Result<Vec<String>> {
+    let wanted = result_id_type(id_type);
+
     Ok(client
-        .get(
-            CONFIG
-                .mainzelliste_url
-                .join(&format!("/patientlist/patients/tokenId/{token}"))?,
-        )
+        .get(join_url(
+            &CONFIG.mainzelliste_url,
+            &format!("patientlist/patients/tokenId/{token}"),
+        )?)
         .send()
         .await?
         .error_for_status()?
-        .json::<Vec<Value>>()
+        .json::<Vec<mainzelliste::Patient>>()
         .await?
         .into_iter()
-        .filter_map(|v| v["ids"][0]["idString"].as_str().map(ToOwned::to_owned))
+        .filter_map(|patient| {
+            patient
+                .ids
+                .into_iter()
+                .find(|id| id.id_type == wanted)
+                .map(|id| id.id_string)
+        })
         .collect())
 }
 
 async fn get_patient_from_fhir_server(
     client: &Client,
-    patient_id: String,
-) -> anyhow::Result<Resource> {
+    patient_id: &str,
+) -> anyhow::Result<Patient> {
+    let mut url = join_url(&CONFIG.fhir_server_url, "fhir/Patient")?;
+    url.query_pairs_mut().append_pair("identifier", patient_id);
+
     let res = client
-        .get(
-            CONFIG
-                .fhir_server_url
-                .join(&format!("/fhir/Patient?identifier={}", patient_id))
-                .unwrap(),
-        )
+        .get(url)
         .send()
         .await
         .context("Could not reach fhir_server")?
         .error_for_status()
         .context("Unsuccessful status code")?;
 
-    Ok(res
-        .json::<Root>()
+    let entries = res
+        .json::<Bundle>()
         .await
-        .context("Fail to parse patient resource")?
-        .entry
-        .first()
+        .context("Failed to parse patient resource")?
+        .entry;
+
+    if entries.len() > 1 {
+        warn!(
+            "Pseudonym {patient_id} matches {} patients in the FHIR server, only the first one \
+             will be tagged",
+            entries.len()
+        );
+    }
+
+    Ok(entries
+        .into_iter()
+        .next()
         .ok_or_else(|| anyhow::anyhow!("Could not find any patient"))?
-        .resource
-        .clone())
+        .resource)
 }
 
-async fn post_patient_to_fhir_server(client: &Client, patient: Resource) -> anyhow::Result<()> {
+async fn post_patient_to_fhir_server(client: &Client, patient: &Patient) -> anyhow::Result<()> {
+    let url = join_url(
+        &CONFIG.fhir_server_url,
+        &format!("fhir/Patient/{}", patient.id()?),
+    )?;
+
     client
-        .put(
-            CONFIG
-                .fhir_server_url
-                .join(&format!("/fhir/Patient/{}", patient.id))
-                .unwrap(),
-        )
-        .json(&patient)
+        .put(url)
+        .json(patient)
         .send()
         .await
         .context("Could not reach fhir_server")?
@@ -263,16 +314,88 @@ async fn post_patient_to_fhir_server(client: &Client, patient: Resource) -> anyh
 }
 
 async fn wait_for_fhir_server(client: &Client) {
+    let url = match join_url(&CONFIG.fhir_server_url, "fhir/metadata") {
+        Ok(url) => url,
+        Err(e) => {
+            error!("Invalid FHIR server url: {e:#}");
+            return;
+        }
+    };
+
     loop {
         if client
-            .get(CONFIG.fhir_server_url.join("/fhir/metadata").unwrap())
+            .get(url.clone())
             .send()
             .await
             .is_ok_and(|r| r.status().is_success())
         {
             break;
         }
-        println!("Waiting for fhir server startup");
+        info!("Waiting for fhir server startup");
         sleep(Duration::from_secs(10)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn join_url_keeps_the_base_path() {
+        let base = Url::parse("https://example.com/bridgehead").unwrap();
+        assert_eq!(
+            join_url(&base, "fhir/metadata").unwrap().as_str(),
+            "https://example.com/bridgehead/fhir/metadata"
+        );
+        // a trailing slash on the base must not double up
+        let base = Url::parse("https://example.com/bridgehead/").unwrap();
+        assert_eq!(
+            join_url(&base, "fhir/metadata").unwrap().as_str(),
+            "https://example.com/bridgehead/fhir/metadata"
+        );
+    }
+
+    #[test]
+    fn tagging_a_patient_keeps_unknown_fields() {
+        let mut patient: Patient = serde_json::from_value(json!({
+            "resourceType": "Patient",
+            "id": "abc",
+            "address": [{ "city": "Heidelberg" }],
+            "extension": [{ "url": "http://dktk.dkfz.de/fhir/projects/DKTK000000791" }],
+        }))
+        .unwrap();
+
+        assert!(patient.has_extension("http://dktk.dkfz.de/fhir/projects/DKTK000000791"));
+        assert!(!patient.has_extension("http://dktk.dkfz.de/fhir/projects/DKTK000002089"));
+
+        patient
+            .add_extension("http://dktk.dkfz.de/fhir/projects/DKTK000002089")
+            .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&patient).unwrap(),
+            json!({
+                "resourceType": "Patient",
+                "id": "abc",
+                "address": [{ "city": "Heidelberg" }],
+                "extension": [
+                    { "url": "http://dktk.dkfz.de/fhir/projects/DKTK000000791" },
+                    { "url": "http://dktk.dkfz.de/fhir/projects/DKTK000002089" },
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn a_patient_without_extensions_gets_the_array() {
+        let mut patient: Patient =
+            serde_json::from_value(json!({ "resourceType": "Patient", "id": "abc" })).unwrap();
+
+        assert!(!patient.has_extension("http://dktk.dkfz.de/fhir/projects/DKTK000000791"));
+        patient
+            .add_extension("http://dktk.dkfz.de/fhir/projects/DKTK000000791")
+            .unwrap();
+        assert!(patient.has_extension("http://dktk.dkfz.de/fhir/projects/DKTK000000791"));
     }
 }
