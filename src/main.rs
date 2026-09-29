@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -6,6 +7,7 @@ use clap::Parser;
 use config::Config;
 use fhir::Bundle;
 use fhir::Patient;
+use fhir::Specimen;
 use reqwest::header::HeaderMap;
 use reqwest::header::HeaderName;
 use reqwest::Client;
@@ -25,6 +27,11 @@ mod config;
 static CONFIG: LazyLock<Config> = LazyLock::new(Config::parse);
 
 const RUN_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
+
+/// Not every site can generate EXLIQUID pseudonyms, but all of them mark the
+/// EXLIQUID specimens with an identifier of this system.
+const EXLIQUID_SPECIMEN_SYSTEM: &str = "http://dktk.dkfz.de/fhir/sid/exliquid-specimen";
+const EXLIQUID_PROJECT_ID: &str = "DKTK000002089";
 
 struct Project {
     id: String,
@@ -117,11 +124,10 @@ async fn main() -> anyhow::Result<()> {
                     project.name
                 );
 
-                let extension_url =
-                    format!("http://dktk.dkfz.de/fhir/projects/{}", project.id.as_str());
+                let extension_url = project_extension_url(&project.id);
 
                 for pseudonym in &patients {
-                    let mut fhir_patient =
+                    let fhir_patient =
                         match get_patient_from_fhir_server(&fhir_client, pseudonym).await {
                             Ok(patient) => patient,
                             Err(e) => {
@@ -130,22 +136,20 @@ async fn main() -> anyhow::Result<()> {
                             }
                         };
 
-                    if fhir_patient.has_extension(&extension_url) {
-                        continue;
-                    }
-
-                    if let Err(e) = fhir_patient.add_extension(&extension_url) {
-                        error!("Could not tag patient {pseudonym}: {e:#}");
-                        continue;
-                    }
-
-                    match post_patient_to_fhir_server(&fhir_client, &fhir_patient).await {
-                        Ok(()) => info!("Added project to patient {pseudonym}"),
-                        Err(e) => error!("Failed to write patient {pseudonym}: {e:#}"),
+                    match tag_patient(&fhir_client, fhir_patient, &extension_url).await {
+                        Ok(true) => info!("Added project to patient {pseudonym}"),
+                        Ok(false) => {}
+                        Err(e) => error!("Could not tag patient {pseudonym}: {e:#}"),
                     }
                 }
             }
         }
+
+        info!("Adding project information to patients with EXLIQUID specimens");
+        if let Err(e) = tag_exliquid_specimen_patients(&fhir_client).await {
+            error!("Could not tag patients with EXLIQUID specimens: {e:#}");
+        }
+
         sleep(RUN_INTERVAL).await;
     }
 }
@@ -237,6 +241,100 @@ fn result_id_type(id_type: &str) -> String {
     format!("BK_{}_{}-ID", CONFIG.site_name, id_type)
 }
 
+fn project_extension_url(project_id: &str) -> String {
+    format!("http://dktk.dkfz.de/fhir/projects/{project_id}")
+}
+
+/// Adds the project extension to the patient and writes it back. Returns false
+/// when the patient already had the extension and nothing was written.
+async fn tag_patient(
+    client: &Client,
+    mut patient: Patient,
+    extension_url: &str,
+) -> anyhow::Result<bool> {
+    if patient.has_extension(extension_url) {
+        return Ok(false);
+    }
+    patient.add_extension(extension_url)?;
+    post_patient_to_fhir_server(client, &patient)
+        .await
+        .context("Failed to write patient")?;
+    Ok(true)
+}
+
+/// Tags every patient that has at least one EXLIQUID specimen with the EXLIQUID
+/// project, for sites that do not have project pseudonyms in the Mainzelliste.
+async fn tag_exliquid_specimen_patients(client: &Client) -> anyhow::Result<()> {
+    let patient_ids = get_exliquid_patient_ids(client).await?;
+    info!(
+        "Found {} patients with EXLIQUID specimens",
+        patient_ids.len()
+    );
+
+    let extension_url = project_extension_url(EXLIQUID_PROJECT_ID);
+
+    for patient_id in &patient_ids {
+        let patient = match read_patient_from_fhir_server(client, patient_id).await {
+            Ok(patient) => patient,
+            Err(e) => {
+                error!("Could not read patient {patient_id}: {e:#}");
+                continue;
+            }
+        };
+
+        match tag_patient(client, patient, &extension_url).await {
+            Ok(true) => info!("Added project to patient {patient_id}"),
+            Ok(false) => {}
+            Err(e) => error!("Could not tag patient {patient_id}: {e:#}"),
+        }
+    }
+    Ok(())
+}
+
+/// The ids of all patients with an EXLIQUID specimen. A patient with several
+/// specimens is only listed once.
+async fn get_exliquid_patient_ids(client: &Client) -> anyhow::Result<BTreeSet<String>> {
+    let mut url = join_url(&CONFIG.fhir_server_url, "fhir/Specimen")?;
+    url.query_pairs_mut()
+        // A token search with only `system|` matches any value of that system.
+        .append_pair("identifier", &format!("{EXLIQUID_SPECIMEN_SYSTEM}|"))
+        .append_pair("_elements", "subject");
+
+    let mut patient_ids = BTreeSet::new();
+    let mut next = Some(url);
+
+    // The search result is paged, follow the next links until the last page.
+    while let Some(url) = next.take() {
+        let bundle = client
+            .get(url)
+            .send()
+            .await
+            .context("Could not reach fhir_server")?
+            .error_for_status()
+            .context("Unsuccessful status code")?
+            .json::<Bundle<Specimen>>()
+            .await
+            .context("Failed to parse specimen bundle")?;
+
+        for entry in &bundle.entry {
+            match entry.resource.patient_id() {
+                Ok(id) => {
+                    patient_ids.insert(id.to_owned());
+                }
+                Err(e) => warn!("{e:#}"),
+            }
+        }
+
+        next = bundle
+            .next_link()
+            .map(Url::parse)
+            .transpose()
+            .context("Invalid next link in specimen bundle")?;
+    }
+
+    Ok(patient_ids)
+}
+
 async fn get_patients(client: &Client, token: &str, id_type: &str) -> anyhow::Result<Vec<String>> {
     let wanted = result_id_type(id_type);
 
@@ -277,7 +375,7 @@ async fn get_patient_from_fhir_server(
         .context("Unsuccessful status code")?;
 
     let entries = res
-        .json::<Bundle>()
+        .json::<Bundle<Patient>>()
         .await
         .context("Failed to parse patient resource")?
         .entry;
@@ -295,6 +393,21 @@ async fn get_patient_from_fhir_server(
         .next()
         .ok_or_else(|| anyhow::anyhow!("Could not find any patient"))?
         .resource)
+}
+
+async fn read_patient_from_fhir_server(client: &Client, id: &str) -> anyhow::Result<Patient> {
+    let url = join_url(&CONFIG.fhir_server_url, &format!("fhir/Patient/{id}"))?;
+
+    client
+        .get(url)
+        .send()
+        .await
+        .context("Could not reach fhir_server")?
+        .error_for_status()
+        .context("Unsuccessful status code")?
+        .json::<Patient>()
+        .await
+        .context("Failed to parse patient resource")
 }
 
 async fn post_patient_to_fhir_server(client: &Client, patient: &Patient) -> anyhow::Result<()> {
@@ -397,5 +510,52 @@ mod tests {
             .add_extension("http://dktk.dkfz.de/fhir/projects/DKTK000000791")
             .unwrap();
         assert!(patient.has_extension("http://dktk.dkfz.de/fhir/projects/DKTK000000791"));
+    }
+
+    #[test]
+    fn specimen_subject_resolves_to_patient_id() {
+        let specimen = |reference: &str| -> Specimen {
+            serde_json::from_value(json!({
+                "resourceType": "Specimen",
+                "id": "s1",
+                "subject": { "reference": reference },
+            }))
+            .unwrap()
+        };
+
+        assert_eq!(specimen("Patient/abc").patient_id().unwrap(), "abc");
+        assert_eq!(
+            specimen("Patient/abc/_history/3").patient_id().unwrap(),
+            "abc"
+        );
+        assert!(specimen("Group/abc").patient_id().is_err());
+
+        let without_subject: Specimen =
+            serde_json::from_value(json!({ "resourceType": "Specimen", "id": "s2" })).unwrap();
+        assert!(without_subject.patient_id().is_err());
+    }
+
+    #[test]
+    fn bundle_finds_the_next_page() {
+        let bundle: Bundle<Specimen> = serde_json::from_value(json!({
+            "resourceType": "Bundle",
+            "type": "searchset",
+            "link": [
+                { "relation": "self", "url": "http://blaze/fhir/Specimen?page=1" },
+                { "relation": "next", "url": "http://blaze/fhir/Specimen?page=2" },
+            ],
+            "entry": [{ "resource": { "resourceType": "Specimen", "id": "s1" } }],
+        }))
+        .unwrap();
+        assert_eq!(
+            bundle.next_link(),
+            Some("http://blaze/fhir/Specimen?page=2")
+        );
+
+        let last_page: Bundle<Specimen> =
+            serde_json::from_value(json!({ "resourceType": "Bundle", "type": "searchset" }))
+                .unwrap();
+        assert!(last_page.next_link().is_none());
+        assert!(last_page.entry.is_empty());
     }
 }
